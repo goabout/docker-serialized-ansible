@@ -33,12 +33,16 @@ def serialize(project, playbook):
 				(project, playbook), file=sys.stderr)
 		return
 
+	print('Waiting for project "%s" playbook "%s" to become idle' %
+			(project, playbook), end='')
 	mark_waiting(state, playbook)
 	try:
 		state = wait_and_activate(state)
 	finally:
 		unmark_waiting(state, playbook)
+	print(file=sys.stderr)
 
+	print('Running project "%s" playbook "%s"' % (project, playbook))
 	try:
 		return run_playbook(playbook)
 	finally:
@@ -80,6 +84,7 @@ def wait_and_activate(state):
 	while state['state'] != 'idle':
 		sleep(1)
 		state = get_state(state.table, state['project'])
+		print(end='.')
 	state['state'] = 'active'
 	state.partial_save()
 	return state
