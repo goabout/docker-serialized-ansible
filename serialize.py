@@ -35,7 +35,7 @@ def serialize(project, playbook):
 
 	mark_waiting(state, playbook)
 	try:
-		wait_and_activate(state)
+		state = wait_and_activate(state)
 	finally:
 		unmark_waiting(state, playbook)
 
@@ -79,9 +79,10 @@ def describe_table(table):
 def wait_and_activate(state):
 	while state['state'] != 'idle':
 		sleep(1)
-		state = get_state(table)
+		state = get_state(state.table, state['project'])
 	state['state'] = 'active'
 	state.partial_save()
+	return state
 
 
 @backoff.on_exception(backoff.constant, ProvisionedThroughputExceededException)
