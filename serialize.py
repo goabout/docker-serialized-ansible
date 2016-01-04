@@ -40,9 +40,8 @@ def serialize(project, playbook):
 		state = wait_and_activate(state)
 	finally:
 		unmark_waiting(state, playbook)
-	print(file=sys.stderr)
 
-	print('Running project "%s" playbook "%s"' % (project, playbook))
+	print('\nRunning project "%s" playbook "%s"' % (project, playbook))
 	try:
 		return run_playbook(playbook)
 	finally:
@@ -130,8 +129,8 @@ def unmark_waiting(state, playbook):
 def run_playbook(playbook):
 	try:
 		proc = Popen(['ansible-playbook', playbook], stdin=PIPE)
-		proc.stdin.close()
-		return proc.wait()
+		proc.communicate()
+		return proc.returncode
 	finally:
 		for _ in range(5):
 			if proc.returncode is not None:
