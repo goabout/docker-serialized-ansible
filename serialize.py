@@ -18,7 +18,7 @@ from boto.exception import JSONResponseError
 
 
 TABLE = 'serialize-ansible'
-THROUGHPUT = {'read':1, 'write': 1}
+THROUGHPUT = {'read': 1, 'write': 1}
 
 
 def serialize(project, playbook):
@@ -39,12 +39,14 @@ def serialize(project, playbook):
 	try:
 		state = wait_and_activate(state)
 	finally:
+		print('FINALLY: 1')
 		unmark_waiting(state, playbook)
 
 	print('\nRunning project "%s" playbook "%s"' % (project, playbook))
 	try:
 		return run_playbook(playbook)
 	finally:
+		print('FINALLY: 2')
 		deactivate(state)
 
 
@@ -91,8 +93,10 @@ def wait_and_activate(state):
 
 @backoff.on_exception(backoff.constant, ProvisionedThroughputExceededException)
 def deactivate(state):
+	print('START: Deactivate')
 	state['state'] = 'idle'
 	state.partial_save()
+	print('END: Deactivate')
 
 
 @backoff.on_exception(backoff.constant, ProvisionedThroughputExceededException)
@@ -114,24 +118,30 @@ def mark_waiting(state, playbook):
 	    update_expression='ADD waiting :playbook',
 	    expression_attribute_values={':playbook': {'SS': [playbook]}},
 	)
+	print('END: Marked waiting')
 
 
 @backoff.on_exception(backoff.constant, ProvisionedThroughputExceededException)
 def unmark_waiting(state, playbook):
+	print('START: Unmarked waiting')
 	state.table.connection.update_item(
 		table_name=TABLE,
 	    key={'project': {'S': state['project']}},
 	    update_expression='DELETE waiting :playbook',
 	    expression_attribute_values={':playbook': {'SS': [playbook]}},
 	)
+	print('END: Unmarked waiting')
 
 
 def run_playbook(playbook):
+	print('START: Run')
 	try:
 		proc = Popen(['ansible-playbook', playbook], stdin=PIPE)
 		proc.communicate()
+		print('END: Run')
 		return proc.returncode
 	finally:
+		print('START FINALLY: Playbook')
 		for _ in range(5):
 			if proc.returncode is not None:
 				break
@@ -139,6 +149,7 @@ def run_playbook(playbook):
 			sleep(1)
 		else:
 			proc.kill()
+		print('END FINALLY: Playbook')
 
 
 if __name__ == '__main__':
