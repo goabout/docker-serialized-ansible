@@ -19,5 +19,8 @@ ENV AWS_REGION us-east-1
 
 COPY boto.cfg /templates/etc/boto.cfg
 
+# Do not buffer stdout/stderr
+ENV PYTHONUNBUFFERED=true
+
 ENTRYPOINT ["entrypoint", "--"]
 CMD ["serialize-ansible-playbook"]
