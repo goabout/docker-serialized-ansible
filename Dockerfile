@@ -14,7 +14,7 @@ COPY serialize.py /usr/local/bin/serialize-ansible-playbook
 RUN chmod +x /usr/local/bin/serialize-ansible-playbook
 
 # Default environment variable values
-ENV PROJECT_NAME ansible
+ENV ANSIBLE_PROJECT ansible
 ENV AWS_REGION us-east-1
 
 COPY boto.cfg /templates/etc/boto.cfg
