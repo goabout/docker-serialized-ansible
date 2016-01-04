@@ -3,7 +3,7 @@ FROM goabout/ansible
 MAINTAINER Go About <tech@goabout.com>
 
 # Install parameterized entrypoint
-ADD https://github.com/jcassee/parameterized-entrypoint/releases/download/0.7.0/entrypoint_linux_amd64 /usr/local/bin/entrypoint
+ADD https://github.com/jcassee/parameterized-entrypoint/releases/download/0.9.0/entrypoint_linux_amd64 /usr/local/bin/entrypoint
 RUN chmod +x /usr/local/bin/entrypoint
 
 # Install dependencies
@@ -19,8 +19,5 @@ ENV AWS_REGION us-east-1
 
 COPY boto.cfg /templates/etc/boto.cfg
 
-# Do not buffer stdout/stderr
-ENV PYTHONUNBUFFERED=true
-
-ENTRYPOINT ["entrypoint", "--"]
+# ENTRYPOINT ["entrypoint", "--"]
 CMD ["serialize-ansible-playbook"]
