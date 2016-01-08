@@ -1,0 +1,8 @@
+---
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Use Ansible variables to configure the serializer
+      template:
+        src: /serialize/serialize.ini.tmpl
+        dest: /serialize/serialize.ini

@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 
+from ConfigParser import ConfigParser, NoSectionError
 import os
 from subprocess import PIPE, Popen
 import sys
@@ -34,38 +35,44 @@ sys.stdout = Unbuffered(sys.stdout)
 sys.stderr = Unbuffered(sys.stderr)
 
 
-def serialize(project, playbook):
-	table = get_table()
-	state = get_state(table, project)
+class ProjectActiveException(Exception):
+	pass
 
-	if state['state'] == 'blocked':
-		print('Project "%s" is blocked' % project)
-		return
-	if playbook in state.get('waiting', set()):
+class ProjectBlockedException(Exception):
+	pass
+
+class PlaybookWaitingException(Exception):
+	pass
+
+
+def serialize(project, playbook, config):
+	table = get_table(config)
+
+	try:
+		state = wait_and_activate(table, project, playbook)
+	except PlaybookWaitingException:
 		print('Project "%s" playbook "%s" is already waiting' %
 				(project, playbook))
 		return
+	except ProjectBlockedException:
+		print('Project "%s" is blocked' % project)
+		return
 
-	print('Waiting for project "%s" playbook "%s" to become idle' %
-			(project, playbook), end='')
-	mark_waiting(state, playbook)
-	try:
-		state = wait_and_activate(state)
-	finally:
-		unmark_waiting(state, playbook)
-
-	print('\nRunning project "%s" playbook "%s"' % (project, playbook))
 	try:
 		return run_playbook(playbook)
 	finally:
 		deactivate(state)
 
 
-def get_table():
+def get_table(config):
+	connection = connect_to_region(config.get('aws_region', 'us-east-1'),
+		aws_access_key_id=config.get('aws_access_key_id'),
+	    aws_secret_access_key=config.get('aws_secret_access_key'))
 	table_props = {
 		'table_name': TABLE,
 		'schema': [HashKey('project')],
 		'throughput': THROUGHPUT,
+		'connection': connection,
 	}
 	table = Table(**table_props)
 	while True:
@@ -90,13 +97,47 @@ def describe_table(table):
 	return table.describe()
 
 
-@backoff.on_exception(backoff.constant, [ConditionalCheckFailedException,
-		ProvisionedThroughputExceededException])
-def wait_and_activate(state):
-	while state['state'] != 'idle':
-		sleep(1)
-		state = get_state(state.table, state['project'])
-		print(end='.')
+@backoff.on_exception(backoff.constant, ProvisionedThroughputExceededException)
+def get_state(table, project):
+	try:
+		return table.get_item(project=project, consistent=True)
+	except ItemNotFound:
+		state = Item(table, data={
+			'project': project,
+			'state': 'idle',
+		})
+		state.save()
+
+
+def wait_and_activate(table, project, playbook):
+	mark_waiting(table, project, playbook)
+	try:
+		print('Waiting for project "%s" playbook "%s" to become idle' %
+				(project, playbook), end='')
+		return activate(table, project, playbook, '.')
+	finally:
+		unmark_waiting(table, project, playbook)
+		print()
+
+@backoff.on_exception(backoff.constant, (ConditionalCheckFailedException,
+		ProvisionedThroughputExceededException, ProjectActiveException))
+def activate(table, project, playbook, progress_str):
+	print('.', end='')
+
+	try:
+		state = table.get_item(project=project, consistent=True)
+	except ItemNotFound:
+		state = Item(table, data={
+			'project': project,
+			'state': 'idle',
+		})
+
+	if state['state'] == 'blocked':
+		raise ProjectBlockedException()
+
+	if state['state'] == 'active':
+		raise ProjectActiveException()
+
 	state['state'] = 'active'
 	state.partial_save()
 	return state
@@ -109,37 +150,35 @@ def deactivate(state):
 
 
 @backoff.on_exception(backoff.constant, ProvisionedThroughputExceededException)
-def get_state(table, project):
+def mark_waiting(table, project, playbook):
 	try:
-		return table.get_item(project=project, consistent=True)
-	except ItemNotFound:
-		return Item(table, data={
-			'project': project,
-			'state': 'idle',
-		})
+		table.connection.update_item(
+			table_name=table.table_name,
+		    key={'project': {'S': project}},
+		    update_expression='ADD waiting :playbooks',
+		    condition_expression='NOT contains(waiting, :playbook)',
+		    expression_attribute_values={
+		    	':playbook': {'S': playbook},
+		    	':playbooks': {'SS': [playbook]},
+	    	},
+		)
+		return True
+	except ConditionalCheckFailedException:
+		raise PlaybookWaitingException()
 
 
 @backoff.on_exception(backoff.constant, ProvisionedThroughputExceededException)
-def mark_waiting(state, playbook):
-	state.table.connection.update_item(
-		table_name=TABLE,
-	    key={'project': {'S': state['project']}},
-	    update_expression='ADD waiting :playbook',
-	    expression_attribute_values={':playbook': {'SS': [playbook]}},
-	)
-
-
-@backoff.on_exception(backoff.constant, ProvisionedThroughputExceededException)
-def unmark_waiting(state, playbook):
-	state.table.connection.update_item(
-		table_name=TABLE,
-	    key={'project': {'S': state['project']}},
-	    update_expression='DELETE waiting :playbook',
-	    expression_attribute_values={':playbook': {'SS': [playbook]}},
+def unmark_waiting(table, project, playbook):
+	table.connection.update_item(
+		table_name=table.table_name,
+	    key={'project': {'S': project}},
+	    update_expression='DELETE waiting :playbooks',
+	    expression_attribute_values={':playbooks': {'SS': [playbook]}},
 	)
 
 
 def run_playbook(playbook):
+	print('Running playbook')
 	try:
 		proc = Popen(['ansible-playbook', playbook])
 		proc.wait()
@@ -154,11 +193,28 @@ def run_playbook(playbook):
 			proc.kill()
 
 
+def load_config():
+	path = os.path.dirname(os.path.abspath(__file__))
+	config = ConfigParser()
+	config.read(os.path.join(path, 'serialize.ini'))
+	try:
+		vars = {k: v for k, v in config.items('serialize') if v}
+	except NoSectionError:
+		vars = {}
+
+	return {var: os.environ.get(var.upper(), vars.get(var)) for var in [
+		'aws_access_key_id',
+		'aws_secret_access_key',
+		'aws_region',
+	]}
+
+
 if __name__ == '__main__':
 	try:
 		project = os.environ['ANSIBLE_PROJECT']
 		playbook = os.environ['ANSIBLE_PLAYBOOK']
-		returncode = serialize(project, playbook)
+		config = load_config()
+		returncode = serialize(project, playbook, config)
 		sys.exit(returncode)
 	except KeyboardInterrupt:
 		print('Interrupted', file=sys.stderr)
