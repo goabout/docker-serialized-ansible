@@ -13,7 +13,10 @@ RUN pip install backoff "boto<3"
 # Install serialization script
 COPY . /serialize/
 
+# Post-processing
+RUN mv /serialize/init-serialize.yml .
+
 # Default environment variable values
 ENV ANSIBLE_PROJECT ansible
 
-CMD ["sh", "/serialize/init-serialize.sh"]
+CMD ["sh", "/serialize/run.sh"]

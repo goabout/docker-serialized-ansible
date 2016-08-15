@@ -1,5 +1,5 @@
 #!/bin/sh
 
-ansible-playbook /serialize/init-serialize.yml
+ansible-playbook init-serialize.yml
 
 exec python /serialize/serialize.py
